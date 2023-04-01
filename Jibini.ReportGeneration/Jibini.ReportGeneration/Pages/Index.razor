@@ -1,0 +1,55 @@
+@namespace Jibini.ReportGeneration.Pages
+@page "/"
+@inject Jibini.ReportGeneration.ISharedBrowserService browser
+
+@if (!string.IsNullOrEmpty(error))
+{
+    <pre><c>@error</c></pre>
+}
+
+<button @onclick="@CheckOutAsync">Check out</button>
+<button @onclick="@CheckInAsync">Check in</button>
+
+@code {
+    private string error = "";
+
+    private Queue<PuppeteerSharp.IPage> pages = new();
+
+    private async Task CheckOutAsync()
+    {
+        try
+        {
+            var b = await browser.CheckOutBrowserAsync();
+            var page = await b.NewPageAsync();
+            pages.Enqueue(page);
+            error = "";
+        } catch (Exception ex)
+        {
+            error = ex.ToString();
+        }
+        StateHasChanged();
+
+        await Task.Delay(1000);
+        await CheckInAsync();
+    }
+
+    private async Task CheckInAsync()
+    {
+        try
+        {
+            var page = pages.Dequeue();
+            await page.DisposeAsync();
+        } catch (Exception ex)
+        {
+            error = ex.ToString();
+        }
+        try
+        {
+            browser.CheckInBrowser();
+        } catch (Exception ex)
+        {
+            error = ex.ToString();
+        }
+        StateHasChanged();
+    }
+}

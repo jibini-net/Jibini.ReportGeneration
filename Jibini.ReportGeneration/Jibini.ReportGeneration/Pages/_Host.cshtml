@@ -1,0 +1,17 @@
+﻿@page "/"
+@namespace Jibini.ReportGeneration.Pages
+@using Microsoft.AspNetCore.Components.Web
+@addTagHelper *, Microsoft.AspNetCore.Mvc.TagHelpers
+@{
+    Layout = "_Layout";
+}
+
+<component type="@typeof(Jibini.ReportGeneration.Pages.Index)" render-mode="Server" />
+
+@section HeadContent {
+    <component type="@typeof(HeadOutlet)" render-mode="ServerPrerendered" />
+}
+
+@section ScriptContent {
+    <script src="_framework/blazor.server.js"></script>
+}
