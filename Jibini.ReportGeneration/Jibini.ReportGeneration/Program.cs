@@ -1,4 +1,4 @@
-using Jibini.ReportGeneration;
+using Jibini.ReportGeneration.Services;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
 
@@ -14,6 +14,11 @@ var builder = WebApplication.CreateBuilder(args);
     builder.Services.AddControllers();
     builder.Services.AddMvcCore();
     builder.Services.AddServerSideBlazor();
+    builder.Services.AddLogging((config) =>
+    {
+        config.SetMinimumLevel(LogLevel.Trace);
+        config.AddSimpleConsole();
+    });
 
     builder.Services.AddSingleton<ISharedBrowserService, SharedBrowserService>();
     builder.Services.AddHostedService((sp) => (sp.GetService<ISharedBrowserService>() as SharedBrowserService)!);

@@ -1,6 +1,6 @@
 @namespace Jibini.ReportGeneration.Pages
 @page "/"
-@inject Jibini.ReportGeneration.ISharedBrowserService browser
+@inject ISharedBrowserService browser
 
 @if (!string.IsNullOrEmpty(error))
 {
@@ -8,7 +8,7 @@
 }
 
 <button @onclick="@CheckOutAsync">Check out</button>
-<button @onclick="@CheckInAsync">Check in</button>
+<button @onclick="@CheckInAsync" disabled="@true">Check in</button>
 
 @code {
     private string error = "";
@@ -22,14 +22,14 @@
             var b = await browser.CheckOutBrowserAsync();
             var page = await b.NewPageAsync();
             pages.Enqueue(page);
-            error = "";
+            //error = "";
         } catch (Exception ex)
         {
             error = ex.ToString();
         }
         StateHasChanged();
 
-        await Task.Delay(1000);
+        await Task.Delay(3000);
         await CheckInAsync();
     }
 

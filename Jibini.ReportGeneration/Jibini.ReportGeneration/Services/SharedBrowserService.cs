@@ -1,6 +1,6 @@
 using PuppeteerSharp;
 
-namespace Jibini.ReportGeneration;
+namespace Jibini.ReportGeneration.Services;
 
 public interface ISharedBrowserService
 {
@@ -31,15 +31,15 @@ public class SharedBrowserService : BackgroundService, ISharedBrowserService
 {
     /// <summary>
     /// Number of milliseconds between checks for Chromium updates; currently
-    /// checks every hour.
+    /// checks every 6 hours.
     /// </summary>
-    public const int UPDATE_INTERVAL = 60 * 60 * 1000;
+    public const int UPDATE_INTERVAL = 6 * 60 * 60 * 1000;
 
     /// <summary>
     /// Number of milliseconds to keep Chromium running after the last task
     /// exits, and no further tasks cancel the termination.
     /// </summary>
-    public const int BROWSER_KEEP_ALIVE = 10 * 1000;
+    public const int BROWSER_KEEP_ALIVE = 5 * 60 * 1000;
 
     /// <summary>
     /// The maximum number of tabs allowed at once ("tasks allowed to access").
@@ -70,6 +70,7 @@ public class SharedBrowserService : BackgroundService, ISharedBrowserService
 
     private async Task _FetchUpdateAsync()
     {
+        logger.LogTrace("Checking for updates to local Chromium");
         using var fetcher = new BrowserFetcher();
         await fetcher.DownloadAsync(BrowserFetcher.DefaultChromiumRevision);
     }
@@ -92,6 +93,7 @@ public class SharedBrowserService : BackgroundService, ISharedBrowserService
         try
         {
             await Task.Delay(BROWSER_KEEP_ALIVE, stop);
+            logger.LogTrace("Browser instance timeout has elapsed; attempting to terminate");
 
             // Make sure no updates/active tasks are running
             _ClaimBrowser();
@@ -101,6 +103,7 @@ public class SharedBrowserService : BackgroundService, ISharedBrowserService
             } finally
             {
                 browser = null;
+                logger.LogInformation("Removed association with any browser instance");
                 _ReleaseBrowser();
             }
         } catch (TaskCanceledException) { }
@@ -108,12 +111,22 @@ public class SharedBrowserService : BackgroundService, ISharedBrowserService
 
     private async Task _LaunchBrowserAsync()
     {
-        browser = await Puppeteer.LaunchAsync(new()
+        try
         {
-            IgnoreHTTPSErrors = true,
-            Headless = false,
-            Args = new[] { "--no-sandbox" }
-        });
+            logger.LogInformation("Attempting to launch shared browser instance");
+            browser = await Puppeteer.LaunchAsync(new()
+            {
+                IgnoreHTTPSErrors = true,
+                Headless = false,
+                Args = new[] { "--no-sandbox" }
+            });
+
+            logger.LogTrace("Browser instance is started without errors");
+        } catch (Exception ex)
+        {
+            logger.LogCritical("Failed to launch Chromium browser instance", ex);
+            throw;
+        }
     }
 
     protected override async Task ExecuteAsync(CancellationToken stop)
@@ -126,20 +139,25 @@ public class SharedBrowserService : BackgroundService, ISharedBrowserService
             {
                 // Terminate any running browser, or else no-op
                 browser?.Dispose();
-                browser = null;
 
                 await _FetchUpdateAsync();
                 logger.LogInformation("Local Chromium revision is latest");
             } catch (Exception ex)
             {
                 logger.LogError("Failed to check or update Chromium revision", ex);
+            } finally
+            {
+                browser = null;
+                _ReleaseBrowser();
             }
-            _ReleaseBrowser();
 
-            // Initial state is claimed; updates first, releases, sleeps
-            await Task.Delay(UPDATE_INTERVAL, stop);
-            // then reclaims lock
-            _ClaimBrowser();
+            try
+            {
+                // Initial state is claimed; updates first, releases, sleeps
+                await Task.Delay(UPDATE_INTERVAL, stop);
+                // then reclaims lock
+                _ClaimBrowser();
+            } catch (TaskCanceledException) { }
         }
     }
 
@@ -155,7 +173,8 @@ public class SharedBrowserService : BackgroundService, ISharedBrowserService
     public Task CheckPendingUpdatesAsync(bool hang = false) => Task.Run(() =>
     {
         // Check if updater is waiting to update
-        var ready = hang ? browserMutex.WaitOne() : browserMutex.WaitOne(0);
+        var ready = await Task.Run(() =>
+            hang ? browserMutex.WaitOne() : browserMutex.WaitOne(0));
         if (!ready)
         {
             throw new Exception("Another task is waiting to control the service");
@@ -167,28 +186,30 @@ public class SharedBrowserService : BackgroundService, ISharedBrowserService
     public async Task<IBrowser> CheckOutBrowserAsync(bool hang = false)
     {
         // Check if updater is waiting to update
-        var ready = hang ? browserMutex.WaitOne() : browserMutex.WaitOne(0);
-        if (!ready)
-        {
-            throw new Exception("Another task is waiting to control the service");
-        }
-
-        _ = pending.WaitOne(0);
+        var ready = await Task.Run(() => 
+            hang ? browserMutex.WaitOne() : browserMutex.WaitOne(0));
+        if (ready)
         {
             if (browser is null)
             {
                 await _LaunchBrowserAsync();
             }
+            _ = pending.WaitOne(0);
 
             // Make sure browser doesn't time out
             browserTimeout?.Cancel();
             browserTimeout?.Dispose();
             browserTimeout = null;
+
+            browserMutex.Release();
+        } else
+        {
+            throw new Exception("Another task is waiting to control the service");
         }
-        browserMutex.Release();
 
         // Check that there aren't too many tabs
-        var available = hang ? concurrencyLimit.WaitOne() : concurrencyLimit.WaitOne(0);
+        var available = await Task.Run(() =>
+            hang ? concurrencyLimit.WaitOne() : concurrencyLimit.WaitOne(0));
         if (!available)
         {
             throw new Exception("There are too many active requests");
